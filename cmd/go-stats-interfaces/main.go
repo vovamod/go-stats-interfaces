@@ -28,10 +28,12 @@ import (
 )
 
 var (
-	prevStats     = make(map[string]entities.StatSnapshot)
-	thresholdMbit = common.ParseThreshold(config.GlobalConfig.Threshold)
-	alertCooldown = common.ParseCooldown(config.GlobalConfig.AlertCooldown)
-	lastAlertTime time.Time
+	prevStats          = make(map[string]entities.StatSnapshot)
+	thresholdMbit      = common.ParseThreshold(config.GlobalConfig.Threshold)
+	alertCooldown      = common.ParseCooldown(config.GlobalConfig.AlertCooldown)
+	lastAlertTime      time.Time
+	alertSoakDuration  = 5 * time.Second
+	thresholdStartTime = make(map[string]time.Time)
 )
 
 // Metadata
@@ -62,8 +64,9 @@ func main() {
 }
 
 func execute() {
-	var totalCurrentMbit float64
 	var discInterfaces []entities.MessageInterface
+	var maxInterfaceMbit float64
+	thresholdBreached := false
 
 	for _, ifaceMap := range config.GlobalConfig.Interfaces {
 		for ifaceName, flags := range ifaceMap {
@@ -82,7 +85,24 @@ func execute() {
 			txMbit := float64(current.TxBytes-prev.TxBytes) * 8 / 1_000_000
 			pps := current.RxPackets - prev.RxPackets
 
-			totalCurrentMbit += rxMbit + txMbit
+			ifaceMbit := rxMbit + txMbit
+			if ifaceMbit > maxInterfaceMbit {
+				maxInterfaceMbit = ifaceMbit
+			}
+
+			if thresholdMbit > 0 && ifaceMbit >= float64(thresholdMbit) {
+				thresholdBreached = true
+				if thresholdStartTime[ifaceName].IsZero() {
+					thresholdStartTime[ifaceName] = time.Now()
+					log.Infof("Interface %s crossed threshold (%.2f Mbit/s). Waiting for verification window.", ifaceName, ifaceMbit)
+				}
+			} else {
+				if !thresholdStartTime[ifaceName].IsZero() {
+					log.Infof("Interface %s recovered down to %.2f Mbit/s. Resetting window.", ifaceName, ifaceMbit)
+					delete(thresholdStartTime, ifaceName)
+				}
+			}
+
 			var trafficType string
 			if flags.Type {
 				trafficType = common.DetectTrafficType(ifaceName, pps)
@@ -112,13 +132,24 @@ func execute() {
 		}
 	}
 
-	if thresholdMbit > 0 && totalCurrentMbit >= float64(thresholdMbit) {
+	shouldAlert := false
+	if thresholdBreached {
+		for ifaceName, startTime := range thresholdStartTime {
+			if !startTime.IsZero() && time.Since(startTime) >= alertSoakDuration {
+				log.Infof("Threshold breach confirmed on %s for %v.", ifaceName, alertSoakDuration)
+				shouldAlert = true
+				break
+			}
+		}
+	}
+
+	if shouldAlert {
 		if time.Since(lastAlertTime) > alertCooldown {
-			log.Infof("Threshold exceeded: %.2f Mbit/s. Sending alert.", totalCurrentMbit)
+			log.Infof("Sending alert payload. Peak active throughput: %.2f Mbit/s.", maxInterfaceMbit)
 
 			ctx := entities.MessageContext{
 				Node:       config.GlobalConfig.Node,
-				Current:    totalCurrentMbit,
+				Current:    maxInterfaceMbit,
 				Allowed:    thresholdMbit,
 				Interfaces: discInterfaces,
 			}
