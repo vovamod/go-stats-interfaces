@@ -17,6 +17,7 @@
 package common
 
 import (
+	"encoding/hex"
 	"fmt"
 	"go-tun/pkg/config"
 	"go-tun/pkg/entities"
@@ -80,16 +81,21 @@ func ParseCooldown(cooldownStr string) time.Duration {
 }
 
 func GetTopConsumerIP() string {
-	data, err := os.ReadFile("/proc/net/nf_conntrack")
-	if err != nil {
-		// Fallback to simpler active network connections state if conntrack metrics are absent
-		data, err = os.ReadFile("/proc/net/tcp")
-		if err != nil {
-			return "unknown"
-		}
+	// 1. NF_CONNTACK method
+	if data, err := os.ReadFile("/proc/net/nf_conntrack"); err == nil {
+		return parseConntrack(string(data))
 	}
 
-	lines := strings.Split(string(data), "\n")
+	// 2. Fall back to standard kernel TCP state table
+	if data, err := os.ReadFile("/proc/net/tcp"); err == nil {
+		return parseProcNetTCP(string(data))
+	}
+
+	return "unknown"
+}
+
+func parseConntrack(content string) string {
+	lines := strings.Split(content, "\n")
 	ipCounts := make(map[string]int)
 
 	for _, line := range lines {
@@ -97,13 +103,55 @@ func GetTopConsumerIP() string {
 		for _, f := range fields {
 			if strings.HasPrefix(f, "src=") {
 				ip := strings.Split(f, "=")[1]
-				if ip != "127.0.0.1" {
+				if ip != "127.0.0.1" && ip != "0.0.0.0" {
 					ipCounts[ip]++
+					break
 				}
 			}
 		}
 	}
+	return findMostFrequent(ipCounts)
+}
 
+func parseProcNetTCP(content string) string {
+	lines := strings.Split(content, "\n")
+	ipCounts := make(map[string]int)
+
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+
+		// fields[2] is rem_address = "HHHHHHHH:PPPP" (Hex IP : Hex Port)
+		remAddr := fields[2]
+		parts := strings.Split(remAddr, ":")
+		if len(parts) != 2 || len(parts[0]) != 8 {
+			continue
+		}
+
+		ipHex := parts[0]
+		if ipHex == "00000000" {
+			continue
+		}
+
+		ipBytes, err := hex.DecodeString(ipHex)
+		if err != nil {
+			continue
+		}
+
+		ip := fmt.Sprintf("%d.%d.%d.%d", ipBytes[3], ipBytes[2], ipBytes[1], ipBytes[0])
+		if ip != "127.0.0.1" {
+			ipCounts[ip]++
+		}
+	}
+	return findMostFrequent(ipCounts)
+}
+
+func findMostFrequent(ipCounts map[string]int) string {
 	var topIP string
 	var maxCount int
 	for ip, count := range ipCounts {
@@ -112,7 +160,6 @@ func GetTopConsumerIP() string {
 			topIP = ip
 		}
 	}
-
 	if topIP == "" {
 		return "N/A"
 	}
