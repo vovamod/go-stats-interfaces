@@ -1,0 +1,73 @@
+name: Build and Release Daemon
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Determine Previous Tag
+        id: history
+        run: |
+          git fetch --tags --force
+          
+          PREV_TAG=$(git tag --sort=-v:refname | head -n 1)
+          
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -n 1)
+          fi
+          
+          echo "prev_tag=${PREV_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Set up Go Environment
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Install UPX Packer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+
+      - name: Compile Universal Static Binary
+        run: |
+          BUILD_TIME=$(date -u +'%Y-%m-%d_%H:%M:%S_UTC')
+          
+          CGO_ENABLED=0 GOAMD64=v3 go build \
+            -ldflags="-s -w -X main.version=${{ github.event.inputs.version }} -X main.buildDate=${BUILD_TIME}" \
+            -o gsi \
+            -tags netgo \
+            ./cmd/go-stats-interfaces/
+
+      - name: Max Compress Binary via UPX
+        run: upx --best --lzma gsi
+
+      - name: Publish GitHub Release Artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          body: |
+            ## Automated System Release - `gsi`
+            
+            * **Release Tag:** `${{ github.event.inputs.version }}`
+            * **Target Architecture:** Linux x86_64 (`GOAMD64=v3`)
+            
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.history.outputs.prev_tag }}...${{ github.event.inputs.version }}
+          files: gsi
+          draft: false
+          prerelease: false

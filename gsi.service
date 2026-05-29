@@ -1,0 +1,20 @@
+[Unit]
+Description=Go Network Interface Monitoring and Alerting Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gsi
+WorkingDirectory=/tmp
+Restart=always
+RestartSec=5s
+# LIMITS
+Environment=GOMEMLIMIT=50MiB
+MemoryHigh=56M
+MemoryMax=64M
+# Limits and safety constraints (required)
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
