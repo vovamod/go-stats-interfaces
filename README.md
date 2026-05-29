@@ -16,7 +16,6 @@ The daemon isolates network sockets and processes metrics without requiring full
 
 Place config.yaml in the active runtime directory of the daemon. If the configuration file is missing, the application generates a default template on its initial execution.
 ```yaml
-
 providers:
     telegram:
         token: ""
@@ -43,17 +42,17 @@ alert_cooldown: 1m # Supported formats: 20s,1m,5m,1h - recommended is 1m
 pps_threshold: 90000
 interfaces:
 - enp2s0:
-  Type: true
-  PPS: true
-  RX: true
-  TX: true
-  OftenIP: true
+      Type: true
+      PPS: true
+      RX: true
+      TX: true
+      OftenIP: true
 - docker0:
-  Type: true
-  PPS: false
-  RX: true
-  TX: true
-  OftenIP: false
+      Type: true
+      PPS: false
+      RX: true
+      TX: true
+      OftenIP: false
 ```
 
 config.yaml - in src
@@ -71,7 +70,6 @@ sudo chmod +x /usr/local/bin/gsi
 
 Create the service definition file at **/etc/systemd/system/gsi.service** using the following structure:
 ```unit file (systemd)
-
 [Unit]
 Description=Go Network Interface Monitoring and Alerting Daemon
 After=network.target
