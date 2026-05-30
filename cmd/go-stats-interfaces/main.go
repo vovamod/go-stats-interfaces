@@ -109,8 +109,8 @@ func execute() {
 			}
 
 			var topIP string
-			if flags.OftenIP {
-				topIP = common.GetTopConsumerIP()
+			if flags.OftenIP && thresholdBreached {
+				topIP = common.GetTopConsumerIP(common.ResolveConsumerIface(ifaceName))
 			}
 
 			item := entities.MessageInterface{
